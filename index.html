@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>城堡對決 (Castle Artillery)</title>
+    <!-- 引入 Tailwind CSS 用於介面排版 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 隱藏捲軸並防止選取文字 */
+        body { margin: 0; overflow: hidden; user-select: none; touch-action: none; background-color: #87CEEB; }
+        canvas { display: block; }
+        /* 自訂拉桿樣式 */
+        input[type=range] {
+            accent-color: #fbbf24;
+        }
+    </style>
+</head>
+<body class="w-screen h-screen flex flex-col font-sans">
+
+    <!-- 遊戲畫布 -->
+    <canvas id="gameCanvas" class="absolute top-0 left-0 w-full h-full z-0"></canvas>
+
+    <!-- UI 覆蓋層 -->
+    <div id="ui-layer" class="absolute top-0 left-0 w-full h-full z-10 pointer-events-none flex flex-col justify-between">
+        
+        <!-- 頂部資訊：血條與回合提示 -->
+        <div class="flex justify-between items-start p-6 w-full max-w-5xl mx-auto">
+            <!-- 玩家 1 資訊 -->
+            <div class="bg-white/80 p-4 rounded-xl shadow-lg border-2 border-red-400 w-64 pointer-events-auto">
+                <h2 class="text-xl font-bold text-red-600 mb-2">玩家 1 (紅堡)</h2>
+                <div class="w-full bg-gray-300 h-4 rounded-full overflow-hidden">
+                    <div id="p1-health" class="bg-red-500 h-full transition-all duration-300" style="width: 100%;"></div>
+                </div>
+                <p id="p1-hp-text" class="text-sm text-right mt-1 font-semibold text-gray-700">100 / 100</p>
+            </div>
+
+            <!-- 回合指示器 -->
+            <div id="turn-indicator" class="bg-yellow-400/90 text-yellow-900 px-6 py-3 rounded-full text-2xl font-black shadow-lg border-4 border-yellow-500 animate-bounce pointer-events-auto">
+                玩家 1 回合
+            </div>
+
+            <!-- 玩家 2 資訊 -->
+            <div class="bg-white/80 p-4 rounded-xl shadow-lg border-2 border-blue-400 w-64 pointer-events-auto">
+                <h2 class="text-xl font-bold text-blue-600 mb-2 text-right">玩家 2 (藍堡)</h2>
+                <div class="w-full bg-gray-300 h-4 rounded-full overflow-hidden flex justify-end">
+                    <div id="p2-health" class="bg-blue-500 h-full transition-all duration-300" style="width: 100%;"></div>
+                </div>
+                <p id="p2-hp-text" class="text-sm text-left mt-1 font-semibold text-gray-700">100 / 100</p>
+            </div>
+        </div>
+
+        <!-- 底部控制面板 -->
+        <div id="controls-panel" class="bg-gray-800/90 text-white p-6 w-full pointer-events-auto border-t-4 border-gray-700 flex justify-center gap-12 items-center pb-8 sm:pb-6">
+            
+            <div class="flex flex-col gap-4 w-64">
+                <div class="flex justify-between items-center">
+                    <label class="font-bold">仰角 (<span id="angle-val">45</span>°)</label>
+                    <input type="range" id="angle-slider" min="0" max="90" value="45" class="w-40 cursor-pointer">
+                </div>
+                <div class="flex justify-between items-center">
+                    <label class="font-bold">力道 (<span id="power-val">50</span>)</label>
+                    <input type="range" id="power-slider" min="10" max="100" value="50" class="w-40 cursor-pointer">
+                </div>
+            </div>
+
+            <button id="fire-btn" class="bg-red-500 hover:bg-red-400 active:bg-red-600 text-white font-black text-3xl px-10 py-6 rounded-2xl shadow-[0_6px_0_#991b1b] active:shadow-[0_0px_0_#991b1b] active:translate-y-[6px] transition-all">
+                發射！
+            </button>
+
+        </div>
+    </div>
+
+    <!-- 遊戲結束畫面 (預設隱藏) -->
+    <div id="game-over-screen" class="hidden absolute top-0 left-0 w-full h-full bg-black/70 z-50 flex items-center justify-center pointer-events-auto">
+        <div class="bg-white p-10 rounded-3xl text-center shadow-2xl transform scale-110">
+            <h1 id="winner-text" class="text-5xl font-black mb-6 text-gray-800">玩家 1 獲勝！</h1>
+            <p class="text-xl text-gray-600 mb-8">城堡已被摧毀</p>
+            <button id="restart-btn" class="bg-green-500 hover:bg-green-400 text-white font-bold text-2xl px-8 py-4 rounded-xl shadow-lg transition-transform hover:scale-105 active:scale-95">
+                再玩一局
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 遊戲核心邏輯與渲染
+         */
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // UI 元素綁定
+        const angleSlider = document.getElementById('angle-slider');
+        const powerSlider = document.getElementById('power-slider');
+        const angleVal = document.getElementById('angle-val');
+        const powerVal = document.getElementById('power-val');
+        const fireBtn = document.getElementById('fire-btn');
+        const turnIndicator = document.getElementById('turn-indicator');
+        const p1HealthBar = document.getElementById('p1-health');
+        const p2HealthBar = document.getElementById('p2-health');
+        const p1HpText = document.getElementById('p1-hp-text');
+        const p2HpText = document.getElementById('p2-hp-text');
+        const controlsPanel = document.getElementById('controls-panel');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const winnerText = document.getElementById('winner-text');
+        const restartBtn = document.getElementById('restart-btn');
+
+        // 遊戲狀態常數
+        const STATE_P1_TURN = 1;
+        const STATE_P2_TURN = 2;
+        const STATE_FLYING = 3;
+        const STATE_GAME_OVER = 4;
+
+        // 全域遊戲變數
+        let gameState = STATE_P1_TURN;
+        let groundY = 0;
+        let gravity = 0.2;
+        let projectile = null;
+        let particles = [];
+
+        // 城堡資料結構
+        const castles = {
+            p1: { x: 0, y: 0, width: 80, height: 100, hp: 100, color: '#dc2626', cannonAngle: 45, power: 50 },
+            p2: { x: 0, y: 0, width: 80, height: 100, hp: 100, color: '#2563eb', cannonAngle: 45, power: 50 }
+        };
+
+        // 初始化畫布尺寸
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            groundY = canvas.height - 120; // 地板高度
+
+            // 更新城堡位置
+            castles.p1.x = canvas.width * 0.15;
+            castles.p1.y = groundY - castles.p1.height;
+            castles.p2.x = canvas.width * 0.85 - castles.p2.width;
+            castles.p2.y = groundY - castles.p2.height;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 監聽拉桿數值變化
+        angleSlider.addEventListener('input', (e) => {
+            angleVal.textContent = e.target.value;
+            if (gameState === STATE_P1_TURN) castles.p1.cannonAngle = parseInt(e.target.value);
+            if (gameState === STATE_P2_TURN) castles.p2.cannonAngle = parseInt(e.target.value);
+        });
+
+        powerSlider.addEventListener('input', (e) => {
+            powerVal.textContent = e.target.value;
+            if (gameState === STATE_P1_TURN) castles.p1.power = parseInt(e.target.value);
+            if (gameState === STATE_P2_TURN) castles.p2.power = parseInt(e.target.value);
+        });
+
+        // 更新 UI 面板的顯示數值
+        function updateUIForTurn() {
+            if (gameState === STATE_P1_TURN) {
+                turnIndicator.textContent = "玩家 1 回合";
+                turnIndicator.className = "bg-red-400 text-white px-6 py-3 rounded-full text-2xl font-black shadow-lg border-4 border-red-500 animate-bounce pointer-events-auto";
+                fireBtn.className = "bg-red-500 hover:bg-red-400 active:bg-red-600 text-white font-black text-3xl px-10 py-6 rounded-2xl shadow-[0_6px_0_#991b1b] active:shadow-[0_0px_0_#991b1b] active:translate-y-[6px] transition-all";
+                angleSlider.value = castles.p1.cannonAngle;
+                powerSlider.value = castles.p1.power;
+            } else if (gameState === STATE_P2_TURN) {
+                turnIndicator.textContent = "玩家 2 回合";
+                turnIndicator.className = "bg-blue-400 text-white px-6 py-3 rounded-full text-2xl font-black shadow-lg border-4 border-blue-500 animate-bounce pointer-events-auto";
+                fireBtn.className = "bg-blue-500 hover:bg-blue-400 active:bg-blue-600 text-white font-black text-3xl px-10 py-6 rounded-2xl shadow-[0_6px_0_#1e3a8a] active:shadow-[0_0px_0_#1e3a8a] active:translate-y-[6px] transition-all";
+                angleSlider.value = castles.p2.cannonAngle;
+                powerSlider.value = castles.p2.power;
+            }
+            angleVal.textContent = angleSlider.value;
+            powerVal.textContent = powerSlider.value;
+            controlsPanel.style.opacity = "1";
+            controlsPanel.style.pointerEvents = "auto";
+        }
+
+        // 發射按鈕邏輯
+        fireBtn.addEventListener('click', () => {
+            if (gameState !== STATE_P1_TURN && gameState !== STATE_P2_TURN) return;
+
+            const isP1 = gameState === STATE_P1_TURN;
+            const currentCastle = isP1 ? castles.p1 : castles.p2;
+            
+            // 計算大砲發射點 (在城堡中心上方)
+            const startX = currentCastle.x + currentCastle.width / 2;
+            const startY = currentCastle.y + 20;
+
+            // 計算發射角度與初速
+            const angleDeg = isP1 ? currentCastle.cannonAngle : currentCastle.cannonAngle;
+            // P1 往右射 (角度為負, 往上), P2 往左射
+            const angleRad = isP1 ? (-angleDeg * Math.PI / 180) : (Math.PI + angleDeg * Math.PI / 180); 
+            
+            const powerMulti = 0.35; // 力道倍率，控制飛行距離
+            const vx = Math.cos(angleRad) * currentCastle.power * powerMulti;
+            const vy = Math.sin(angleRad) * currentCastle.power * powerMulti;
+
+            projectile = {
+                x: startX + Math.cos(angleRad) * 40, // 從砲口出來
+                y: startY + Math.sin(angleRad) * 40,
+                vx: vx,
+                vy: vy,
+                radius: 6,
+                isP1: isP1
+            };
+
+            gameState = STATE_FLYING;
+            controlsPanel.style.opacity = "0.3"; // 飛行時變暗禁用
+            controlsPanel.style.pointerEvents = "none";
+        });
+
+        // 重新開始遊戲
+        restartBtn.addEventListener('click', () => {
+            castles.p1.hp = 100;
+            castles.p2.hp = 100;
+            updateHealthBars();
+            gameState = STATE_P1_TURN;
+            projectile = null;
+            particles = [];
+            gameOverScreen.classList.add('hidden');
+            updateUIForTurn();
+        });
+
+        function updateHealthBars() {
+            p1HealthBar.style.width = Math.max(0, castles.p1.hp) + '%';
+            p2HealthBar.style.width = Math.max(0, castles.p2.hp) + '%';
+            p1HpText.textContent = `${Math.max(0, castles.p1.hp)} / 100`;
+            p2HpText.textContent = `${Math.max(0, castles.p2.hp)} / 100`;
+        }
+
+        // 產生爆炸粒子特效
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 30; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 1.0,
+                    color: color,
+                    size: Math.random() * 4 + 2
+                });
+            }
+        }
+
+        // 處理砲彈命中傷害
+        function handleHit(targetCastle, damage) {
+            targetCastle.hp -= damage;
+            updateHealthBars();
+            if (targetCastle.hp <= 0) {
+                gameState = STATE_GAME_OVER;
+                winnerText.textContent = targetCastle === castles.p2 ? "玩家 1 獲勝！" : "玩家 2 獲勝！";
+                winnerText.className = targetCastle === castles.p2 ? "text-5xl font-black mb-6 text-red-600" : "text-5xl font-black mb-6 text-blue-600";
+                setTimeout(() => gameOverScreen.classList.remove('hidden'), 1000);
+            }
+        }
+
+        // 繪製城堡
+        function drawCastle(c, isP1) {
+            // 城堡主體
+            ctx.fillStyle = c.color;
+            ctx.fillRect(c.x, c.y, c.width, c.height);
+            
+            // 繪製城垛 (上方的凹凸造型)
+            const battlementWidth = c.width / 3;
+            ctx.fillRect(c.x, c.y - 15, battlementWidth - 5, 15);
+            ctx.fillRect(c.x + battlementWidth + 2.5, c.y - 15, battlementWidth - 5, 15);
+            ctx.fillRect(c.x + battlementWidth * 2 + 5, c.y - 15, battlementWidth - 5, 15);
+
+            // 繪製大砲
+            const cannonX = c.x + c.width / 2;
+            const cannonY = c.y + 20;
+            const angleRad = isP1 ? (-c.cannonAngle * Math.PI / 180) : (Math.PI + c.cannonAngle * Math.PI / 180);
+
+            ctx.save();
+            ctx.translate(cannonX, cannonY);
+            ctx.rotate(angleRad);
+            ctx.fillStyle = '#374151'; // 深灰色砲管
+            ctx.fillRect(0, -6, 50, 12); // 砲管長50，粗12
+            // 砲座
+            ctx.fillStyle = '#1f2937';
+            ctx.beginPath();
+            ctx.arc(0, 0, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        /**
+         * 主遊戲迴圈
+         */
+        function gameLoop() {
+            // 1. 清除畫布 & 畫背景
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, "#87CEEB"); // 天空藍
+            gradient.addColorStop(1, "#E0F6FF");
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 畫太陽
+            ctx.fillStyle = "#FDE047";
+            ctx.beginPath();
+            ctx.arc(canvas.width / 2, 100, 40, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. 畫地板
+            ctx.fillStyle = '#4ade80'; // 亮綠色草地
+            ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+            ctx.fillStyle = '#22c55e'; // 草地裝飾線
+            ctx.fillRect(0, groundY, canvas.width, 10);
+
+            // 3. 畫城堡
+            drawCastle(castles.p1, true);
+            drawCastle(castles.p2, false);
+
+            // 4. 更新與繪製砲彈
+            if (projectile) {
+                // 物理更新
+                projectile.vy += gravity; // 套用重力
+                projectile.x += projectile.vx;
+                projectile.y += projectile.vy;
+
+                // 畫砲彈
+                ctx.fillStyle = '#111827'; // 黑色砲彈
+                ctx.beginPath();
+                ctx.arc(projectile.x, projectile.y, projectile.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 碰撞偵測 - 檢查是否撞到地板
+                if (projectile.y + projectile.radius >= groundY) {
+                    createExplosion(projectile.x, groundY, '#f59e0b'); // 橘黃色泥土/火花爆炸
+                    projectile = null;
+                    if (gameState === STATE_FLYING) {
+                        gameState = (turnIndicator.textContent.includes("1")) ? STATE_P2_TURN : STATE_P1_TURN;
+                        updateUIForTurn();
+                    }
+                } 
+                // 碰撞偵測 - 檢查是否打中城堡
+                else if (projectile) {
+                    const target = projectile.isP1 ? castles.p2 : castles.p1;
+                    // 簡單矩形碰撞
+                    if (projectile.x + projectile.radius > target.x && 
+                        projectile.x - projectile.radius < target.x + target.width &&
+                        projectile.y + projectile.radius > target.y && 
+                        projectile.y - projectile.radius < target.y + target.height + 20) {
+                        
+                        createExplosion(projectile.x, projectile.y, '#ef4444'); // 紅色火焰爆炸
+                        handleHit(target, 25 + Math.floor(Math.random() * 10)); // 傷害 25~34
+                        projectile = null;
+                        
+                        if (gameState === STATE_FLYING) {
+                            gameState = target === castles.p2 ? STATE_P2_TURN : STATE_P1_TURN;
+                            updateUIForTurn();
+                        }
+                    }
+                }
+                
+                // 飛出畫面左右或太高處理 (視為失誤)
+                if (projectile && (projectile.x < -100 || projectile.x > canvas.width + 100 || projectile.y > canvas.height + 100)) {
+                    projectile = null;
+                    if (gameState === STATE_FLYING) {
+                        gameState = (turnIndicator.textContent.includes("1")) ? STATE_P2_TURN : STATE_P1_TURN;
+                        updateUIForTurn();
+                    }
+                }
+            }
+
+            // 5. 更新與繪製粒子特效
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.03; // 生命週期衰減
+
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                }
+            }
+
+            // 不斷循環執行
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 初始化開始
+        updateUIForTurn();
+        gameLoop();
+
+    </script>
+</body>
+</html>
